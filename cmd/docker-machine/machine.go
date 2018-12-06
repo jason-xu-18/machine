@@ -18,6 +18,7 @@ import (
 	"github.com/docker/machine/drivers/google"
 	"github.com/docker/machine/drivers/hyperv"
 	"github.com/docker/machine/drivers/none"
+	"github.com/docker/machine/drivers/oci"
 	"github.com/docker/machine/drivers/openstack"
 	"github.com/docker/machine/drivers/rackspace"
 	"github.com/docker/machine/drivers/softlayer"
@@ -183,6 +184,8 @@ func runDriver(driverName string) {
 		plugin.RegisterDriver(hyperv.NewDriver("", ""))
 	case "none":
 		plugin.RegisterDriver(none.NewDriver("", ""))
+	case "oci":
+		plugin.RegisterDriver(oci.NewDriver("", ""))
 	case "openstack":
 		plugin.RegisterDriver(openstack.NewDriver("", ""))
 	case "rackspace":
