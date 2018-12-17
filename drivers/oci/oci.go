@@ -9,10 +9,36 @@ import (
 // Driver represents Oci Docker Machine Driver.
 type Driver struct {
 	*drivers.BaseDriver
+
+	tenancy string
+
+	CompartmentName string
+	DisplayName string
+	AvailabilityDomain string
+	ImageName string
+    Shape string
+
+	// default retry policy will retry on non-200 response
+	RequestMetadata common.RequestMetadata
+
 	InstanceID string
 
-	DockerPort      int
+	DockerPort int
 }
+
+const (
+
+	defaultOciShape            = "VM.Standard2.1"
+	defaultOciLocation        = ""
+	defaultSSHUser              = "" 
+	defaultDockerPort           = 2376 //？
+	defaultOciImage           = ""
+	defaultOciVNet            = ""
+	defaultOciSubnet          = ""
+	defaultOciSubnetPrefix    = ""
+	defaultStorageType          = string(storage.StandardLRS)
+
+)
 
 const (
 	driverName               = "oci"
@@ -126,7 +152,53 @@ func (d *Driver) PreCreateCheck() (err error) {
 
 // Create creates the virtual machine.
 func (d *Driver) Create() error {
+	log.Debug("Prepareing launching request.")
+	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
+	helpers.FatalIfError(err)
+	ctx := context.Background()
+	request := core.LaunchInstanceRequest{}
 
+	request.DisplayName=d.DisplayName
+	request.AvailabilityDomain = d.AvailableDomain
+	request.Shape = d.Shape
+
+	compartmentID := getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
+	if compartmentId == nil {
+		fmt.Println("Can't get compartmentId")
+	}
+
+	request.CompartmentId = compartmentId
+
+	imageid = getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
+	if imageid == nil {
+		fmt.Println("Can't get image id")
+	}
+
+	request.ImageId = imageid
+
+	request.RequestMetadata = helpers.GetRequestMetadataWithDefaultRetryPolicy()
+
+	createResp, err := c.LaunchInstance(ctx, request)
+	fmt.Println("Launching Oci instance.")
+
+	// should retry condition check which returns a bool value indicating whether to do retry or not
+	// it checks the lifecycle status equals to Running or not for this case
+	shouldRetryFunc := func(r common.OCIOperationResponse) bool {
+		if converted, ok := r.Response.(core.GetInstanceResponse); ok {
+			return converted.LifecycleState != core.InstanceLifecycleStateRunning
+		}
+		return true
+	}
+	// create get instance request with a retry policy which takes a function
+	// to determine shouldRetry or not
+	pollingGetRequest := core.GetInstanceRequest{
+		InstanceId:      createResp.Instance.Id,
+		RequestMetadata: helpers.GetRequestMetadataWithCustomizedRetryPolicy(shouldRetryFunc),
+	}
+	_, pollError := c.GetInstance(ctx, pollingGetRequest)
+	helpers.FatalIfError(pollError)
+
+	fmt.Println("Oci instance launched")
 
 	return nil
 }
@@ -224,4 +296,61 @@ func (d *Driver) Kill() error {
 	// machines, Stop() is the closest option.
 	log.Debug("Oci does not implement kill. Calling Stop instead.")
 	return d.Stop()
+}
+
+// 
+func listCompartments(ctx context.Context, c core.IdentityClient, compartmentID *string) []identity.Compartment {
+	request := core.ListCompartmentsRequest{
+		CompartmentId: compartmentID,
+	}
+
+	r, err := c.ListCompartments(ctx, request, tenancy)
+	helpers.FatalIfError(err)
+
+	return r.Items
+}
+
+func getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) *string {
+	c, clerr := identity.NewIdentityClientWithConfigurationProvider(provider)
+	if clerr != nil {
+		fmt.Println("Error:", clerr)
+	}
+	Compartments := listCompartments(ctx, c)
+
+	for _, compartment := range Compartments {
+		if *compartment.DisplayName == compartmentName {
+			// VCN already created, return it
+			return compartment.Id
+		}
+	}
+	return nil
+}
+
+// ListImages lists the available images in the specified compartment.
+func listImages(ctx context.Context, c core.ComputeClient, compartmentID *string) []core.Image {
+	request := core.ListImagesRequest{
+		CompartmentId: compartmentID,
+	}
+
+	r, err := c.ListImages(ctx, request)
+	helpers.FatalIfError(err)
+
+	return r.Items
+}
+
+
+func getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) *string {
+	c, clerr := core.NewVirtualNetworkClientWithConfigurationProvider(provider)
+	if clerr != nil {
+		fmt.Println("Error:", clerr)
+	}
+	Images := listImages(ctx, c, tenancy)
+
+	for _, image := range Images {
+		if *image.DisplayName == imageName {
+			// VCN already created, return it
+			return image.Id
+		}
+	}
+	return nil
 }
