@@ -162,16 +162,18 @@ func (d *Driver) Create() error {
 	request.AvailabilityDomain = d.AvailableDomain
 	request.Shape = d.Shape
 
-	compartmentID := getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
-	if compartmentId == nil {
-		fmt.Println("Can't get compartmentId")
+	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
 	}
 
 	request.CompartmentId = compartmentId
 
-	imageid = getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
-	if imageid == nil {
-		fmt.Println("Can't get image id")
+	imageid, err := getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
 	}
 
 	request.ImageId = imageid
@@ -299,7 +301,7 @@ func (d *Driver) Kill() error {
 }
 
 // 
-func listCompartments(ctx context.Context, c core.IdentityClient, compartmentID *string) []identity.Compartment {
+func (d *Driver) listCompartments(ctx context.Context, c core.IdentityClient, compartmentID *string) ([]identity.Compartment,error) {
 	request := core.ListCompartmentsRequest{
 		CompartmentId: compartmentID,
 	}
@@ -307,27 +309,29 @@ func listCompartments(ctx context.Context, c core.IdentityClient, compartmentID 
 	r, err := c.ListCompartments(ctx, request, tenancy)
 	helpers.FatalIfError(err)
 
-	return r.Items
+	return r.Items, err
 }
 
-func getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) *string {
+func (d *Driver) getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) （*string, error) {
 	c, clerr := identity.NewIdentityClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
+		return nil, clerr
 	}
-	Compartments := listCompartments(ctx, c)
+	Compartments := listCompartments(ctx, c, d.tenancy)
 
 	for _, compartment := range Compartments {
 		if *compartment.DisplayName == compartmentName {
 			// VCN already created, return it
-			return compartment.Id
+			return compartment.Id, nil
 		}
 	}
-	return nil
+	err := fmt.Errorf("Can't find Compartment with name %s", compartmentName)
+	return nil, err
 }
 
 // ListImages lists the available images in the specified compartment.
-func listImages(ctx context.Context, c core.ComputeClient, compartmentID *string) []core.Image {
+func (d *Driver) listImages(ctx context.Context, c core.ComputeClient, compartmentID *string) ([]core.Image,error) {
 	request := core.ListImagesRequest{
 		CompartmentId: compartmentID,
 	}
@@ -335,22 +339,23 @@ func listImages(ctx context.Context, c core.ComputeClient, compartmentID *string
 	r, err := c.ListImages(ctx, request)
 	helpers.FatalIfError(err)
 
-	return r.Items
+	return r.Items, err
 }
 
 
-func getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) *string {
+func (d *Driver) getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) (*string,error){
 	c, clerr := core.NewVirtualNetworkClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 	}
-	Images := listImages(ctx, c, tenancy)
+	Images := listImages(ctx, c, d.tenancy)
 
 	for _, image := range Images {
 		if *image.DisplayName == imageName {
 			// VCN already created, return it
-			return image.Id
+			return image.Id, nil
 		}
 	}
-	return nil
+	err := fmt.Errorf("Can't find Image with name %s", imageName)
+	return nil, err
 }
