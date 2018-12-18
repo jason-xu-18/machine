@@ -15,8 +15,11 @@ type Driver struct {
 	CompartmentName string
 	DisplayName string
 	AvailabilityDomain string
+	FaultDomain string
+	VCNName string
 	ImageName string
-    Shape string
+	Shape string
+	SubnetName  string
 
 	// default retry policy will retry on non-200 response
 	RequestMetadata common.RequestMetadata
@@ -28,16 +31,19 @@ type Driver struct {
 
 const (
 
+	defaultOciAvailableDomain  = "eXkP:PHX-AD-1"
 	defaultOciShape            = "VM.Standard2.1"
-	defaultOciLocation        = ""
-	defaultSSHUser              = "" 
-	defaultDockerPort           = 2376 //？
-	defaultOciImage           = ""
-	defaultOciVNet            = ""
-	defaultOciSubnet          = ""
-	defaultOciSubnetPrefix    = ""
-	defaultStorageType          = string(storage.StandardLRS)
+	defaultOciFaultDomain     = "FAULT-DOMAIN-1"
 
+)
+
+const (
+	flagOciAvailableDomain = "oci-available-domain"
+	flagOciFaultDomain = "oci-fault-domain"
+	flagOciShape            = "oci-shape"
+	flagOciImageName          = "oci-image"
+	flagOciVCNName            = "oci-vnet"
+	flagOciSubnetName          = "oci-subnet"
 )
 
 const (
@@ -117,6 +123,42 @@ func (d *Driver) DriverName() string { return driverName }
 // GetCreateFlags returns list of create flags driver accepts.
 func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 	return []mcnflag.Flag{
+		mcnflag.StringFlag{
+			Name:   flagOciAvailableDomain,
+			Usage:  "The availability domain of the instance.",
+			EnvVar: "OCI_AVAILABLE_DOMAIN",
+			Value:  defaultOciAvailableDomain,
+		},
+		mcnflag.StringFlag{
+			Name:   flagOciFaultDomain,
+			Usage:  "A fault domain is a grouping of hardware and infrastructure within an availability domain.",
+			EnvVar: "OCI_FAULT_DOMAIN",
+			Value:  defaultOciFaultDomain,
+		},
+		mcnflag.StringFlag{
+			Name:   flagOciShape,
+			Usage:  "The shape of an instance. The shape determines the number of CPUs, amount of memory, and other resources allocated to the instance.",
+			EnvVar: "OCI_SHAPE",
+			Value:  defaultOciShape,
+		},
+		mcnflag.StringFlag{
+			Name:   flagOciImageName,
+			Usage:  "The display name of image",
+			EnvVar: "OCI_IMAGE_NAME",
+
+		},
+		mcnflag.StringFlag{
+			Name:   flagOciVCNName,
+			Usage:  "The display name of VCN",
+			EnvVar: "OCI_VCN_NAME",
+
+		},
+		mcnflag.StringFlag{
+			Name:   flagOciSubnetName,
+			Usage:  "The display name of subnet",
+			EnvVar: "OCI_SUBNET_NAME",
+
+		},
 		
 	}
 }
@@ -126,6 +168,27 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 func (d *Driver) SetConfigFromFlags(fl drivers.DriverOptions) error {
 	// Initialize driver context for machine
 
+		// Required string flags
+		flags := []struct {
+			target *string
+			flag   string
+		}{
+			{&d.ImageName, flagOciImageName},
+			{&d.VCNName, flagOciVCNName},
+			{&d.SubnetName, flagOciSubnetName},
+			{&d.AvailableDomain, flagOciAvailableDomain},
+			{&d.FaultDomain, flagOciFaultDomain},
+			{&d.Shape, flagOciShape},
+		}
+		for _, f := range flags {
+			*f.target = fl.String(f.flag)
+			if *f.target == "" {
+				return requiredOptionError(f.flag)
+			}
+		}
+
+		log.Debug("Set configuration from flags.")
+		
 
 	return nil
 }
@@ -139,7 +202,7 @@ func (d *Driver) PreCreateCheck() (err error) {
 	// Check if virtual machine exists. An existing virtual machine cannot be updated.
 
 
-	// NOTE(ahmetalpbalkan) we could have done more checks here but Azure often
+	// NOTE(ahmetalpbalkan) we could have done more checks here but Oci often
 	// returns meaningful error messages and it would be repeating the backend
 	// logic on the client side. Some examples:
 	//   - Deployment of a machine to an existing Virtual Network fails if
