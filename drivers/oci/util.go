@@ -2,18 +2,19 @@ package oci
 
 import (
 	"fmt"
-	"io/ioutil"
-	"net"
-	"net/url"
-	"strings"
-
-	"github.com/Azure/azure-sdk-for-go/arm/network"
 	"github.com/docker/machine/libmachine/state"
 	"github.com/oracle/oci-go-sdk/core"
+	"github.com/docker/machine/libmachine/log"
 )
 
-func machineStateForLifecycleState(ls InstanceLifecycleStateEnum) state.State {
-	m := map[InstanceLifecycleStateEnum]state.State{
+type requiredOptionError string
+
+func (r requiredOptionError) Error() string {
+	return fmt.Sprintf("%s driver requires the %q option.", driverName, string(r))
+}
+
+func machineStateForLifecycleState(ls core.InstanceLifecycleStateEnum) state.State {
+	m := map[core.InstanceLifecycleStateEnum]state.State{
 		core.InstanceLifecycleStateRunning:     state.Running,
 		core.InstanceLifecycleStateStarting:    state.Starting,
 		core.InstanceLifecycleStateProvisioning:    state.Starting,

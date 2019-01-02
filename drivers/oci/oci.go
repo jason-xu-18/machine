@@ -1,9 +1,19 @@
 package oci
 
 import (
+	"context"
+	"fmt"
+	"net"
+	"net/url"
+
 	"github.com/docker/machine/libmachine/drivers"
+	"github.com/docker/machine/libmachine/log"
+	"github.com/docker/machine/libmachine/mcnflag"
+	"github.com/docker/machine/libmachine/state"
 	"github.com/oracle/oci-go-sdk/common"
 	"github.com/oracle/oci-go-sdk/core"
+	"github.com/oracle/oci-go-sdk/example/helpers"
+	"github.com/oracle/oci-go-sdk/identity"
 )
 
 // Driver represents Oci Docker Machine Driver.
@@ -12,14 +22,14 @@ type Driver struct {
 
 	tenancy string
 
-	CompartmentName string
-	DisplayName string
+	CompartmentName    string
+	DisplayName        string
 	AvailabilityDomain string
-	FaultDomain string
-	VCNName string
-	ImageName string
-	Shape string
-	SubnetName  string
+	FaultDomain        string
+	VCNName            string
+	ImageName          string
+	Shape              string
+	SubnetName         string
 
 	// default retry policy will retry on non-200 response
 	RequestMetadata common.RequestMetadata
@@ -27,23 +37,27 @@ type Driver struct {
 	InstanceID string
 
 	DockerPort int
+
+	resolvedIP string
 }
 
 const (
-
-	defaultOciAvailableDomain  = "eXkP:PHX-AD-1"
-	defaultOciShape            = "VM.Standard2.1"
+	defaultSSHUser            = "docker-user"
+	defaultOciAvailableDomain = "eXkP:PHX-AD-1"
+	defaultOciShape           = "VM.Standard2.1"
 	defaultOciFaultDomain     = "FAULT-DOMAIN-1"
-
+	defaultOciImageName       = "Oracle Linux 7.6"
+	defaultOciVCNName         = "OCI-GOSDK-Sample-VCN"
+	defaultOciSubnetName      = "OCI-GOSDK-Sample-Subnet2"
 )
 
 const (
 	flagOciAvailableDomain = "oci-available-domain"
-	flagOciFaultDomain = "oci-fault-domain"
-	flagOciShape            = "oci-shape"
-	flagOciImageName          = "oci-image"
-	flagOciVCNName            = "oci-vnet"
-	flagOciSubnetName          = "oci-subnet"
+	flagOciFaultDomain     = "oci-fault-domain"
+	flagOciShape           = "oci-shape"
+	flagOciImageName       = "oci-image"
+	flagOciVCNName         = "oci-vnet"
+	flagOciSubnetName      = "oci-subnet"
 )
 
 const (
@@ -51,7 +65,6 @@ const (
 	ipRange                  = "0.0.0.0/0"
 	machineSecurityGroupName = "rancher-nodes"
 	machineTag               = "rancher-nodes"
-	
 )
 
 // NewDriver returns a new driver instance.
@@ -67,38 +80,39 @@ func NewDriver(hostName, storePath string) drivers.Driver {
 }
 
 //Stop issues a power off for the virtual machine instance.
-func (d *Driver) Stop() error  {
+func (d *Driver) Stop() error {
 	fmt.Println("Stoping inst03")
 	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
 	helpers.FatalIfError(err)
 	ctx := context.Background()
 
 	request := core.InstanceActionRequest{}
-	request.InstanceId=d.InstanceID
-	request.Action=core.InstanceActionActionEnum("STOP")
+	request.InstanceId = &(d.InstanceID)
+	request.Action = core.InstanceActionActionEnum("STOP")
 
-	_, err = c.InstanceAction(ctx , request) 
+	_, err = c.InstanceAction(ctx, request)
 	helpers.FatalIfError(err)
 
-	return 
+	return nil
 }
 
 //Start issues a power on for the virtual machine instance.
-func (d *Driver) Start() error  {
+func (d *Driver) Start() error {
 	fmt.Println("Starting instance")
 	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
 	helpers.FatalIfError(err)
 	ctx := context.Background()
 
 	request := core.InstanceActionRequest{}
-	request.InstanceId=d.InstanceID
-	request.Action=core.InstanceActionActionEnum("START")
+	request.InstanceId = &(d.InstanceID)
+	request.Action = core.InstanceActionActionEnum("START")
 
-	_, err = c.InstanceAction(ctx , request) 
+	_, err = c.InstanceAction(ctx, request)
 	helpers.FatalIfError(err)
 
-	return err
+	return nil
 }
+
 // GetState returns the state of the virtual machine role instance.
 func (d *Driver) GetState() (state.State, error) {
 	fmt.Println("Getting state of instance")
@@ -107,13 +121,13 @@ func (d *Driver) GetState() (state.State, error) {
 	ctx := context.Background()
 
 	request := core.GetInstanceRequest{}
-	equest.InstanceId=d.InstanceID
+	request.InstanceId = &(d.InstanceID)
 
-	response, err := c.GetInstance(ctx , request) 
+	response, err := c.GetInstance(ctx, request)
 	lifecycleState := response.Instance.LifecycleState
 	machineState := machineStateForLifecycleState(lifecycleState)
 	log.Debugf("Determined Oci LifecycleState=%q, docker-machine state=%q",
-	lifecycleState, machineState)
+		lifecycleState, machineState)
 	return machineState, nil
 }
 
@@ -145,21 +159,20 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:   flagOciImageName,
 			Usage:  "The display name of image",
 			EnvVar: "OCI_IMAGE_NAME",
-
+			Value:  defaultOciImageName,
 		},
 		mcnflag.StringFlag{
 			Name:   flagOciVCNName,
 			Usage:  "The display name of VCN",
 			EnvVar: "OCI_VCN_NAME",
-
+			Value:  defaultOciVCNName,
 		},
 		mcnflag.StringFlag{
 			Name:   flagOciSubnetName,
 			Usage:  "The display name of subnet",
 			EnvVar: "OCI_SUBNET_NAME",
-
+			Value:  defaultOciSubnetName,
 		},
-		
 	}
 }
 
@@ -168,27 +181,26 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 func (d *Driver) SetConfigFromFlags(fl drivers.DriverOptions) error {
 	// Initialize driver context for machine
 
-		// Required string flags
-		flags := []struct {
-			target *string
-			flag   string
-		}{
-			{&d.ImageName, flagOciImageName},
-			{&d.VCNName, flagOciVCNName},
-			{&d.SubnetName, flagOciSubnetName},
-			{&d.AvailableDomain, flagOciAvailableDomain},
-			{&d.FaultDomain, flagOciFaultDomain},
-			{&d.Shape, flagOciShape},
+	// Required string flags
+	flags := []struct {
+		target *string
+		flag   string
+	}{
+		{&d.ImageName, flagOciImageName},
+		{&d.VCNName, flagOciVCNName},
+		{&d.SubnetName, flagOciSubnetName},
+		{&d.AvailabilityDomain, flagOciAvailableDomain},
+		{&d.FaultDomain, flagOciFaultDomain},
+		{&d.Shape, flagOciShape},
+	}
+	for _, f := range flags {
+		*f.target = fl.String(f.flag)
+		if *f.target == "" {
+			return requiredOptionError(f.flag)
 		}
-		for _, f := range flags {
-			*f.target = fl.String(f.flag)
-			if *f.target == "" {
-				return requiredOptionError(f.flag)
-			}
-		}
+	}
 
-		log.Debug("Set configuration from flags.")
-		
+	log.Debug("Set configuration from flags.")
 
 	return nil
 }
@@ -198,9 +210,7 @@ func (d *Driver) PreCreateCheck() (err error) {
 
 	// Validate if firewall rules can be read correctly
 
-
 	// Check if virtual machine exists. An existing virtual machine cannot be updated.
-
 
 	// NOTE(ahmetalpbalkan) we could have done more checks here but Oci often
 	// returns meaningful error messages and it would be repeating the backend
@@ -215,25 +225,26 @@ func (d *Driver) PreCreateCheck() (err error) {
 
 // Create creates the virtual machine.
 func (d *Driver) Create() error {
-	log.Debug("Prepareing launching request.")
+	fmt.Println("Prepareing launching request.")
 	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
+	fmt.Println("New compute client success, err:", err)
 	helpers.FatalIfError(err)
 	ctx := context.Background()
 	request := core.LaunchInstanceRequest{}
 
-	request.DisplayName=d.DisplayName
-	request.AvailabilityDomain = d.AvailableDomain
-	request.Shape = d.Shape
-
+	request.DisplayName = &(d.DisplayName)
+	request.AvailabilityDomain = &(d.AvailabilityDomain)
+	request.Shape = &(d.Shape)
+	fmt.Println("Before get compartmentID")
 	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
 	}
 
-	request.CompartmentId = compartmentId
+	request.CompartmentId = compartmentID
 
-	imageid, err := getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
+	imageid, err := d.getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
@@ -276,12 +287,14 @@ func (d *Driver) Remove() error {
 	request := core.TerminateInstanceRequest{
 		RequestMetadata: helpers.GetRequestMetadataWithDefaultRetryPolicy(),
 	}
-	request.InstanceId=d.InstanceID
+	request.InstanceId = &(d.InstanceID)
 
-	_, err := c.TerminateInstance(ctx, request)
+	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
+	helpers.FatalIfError(err)
+	ctx := context.Background()
+	_, err = c.TerminateInstance(ctx, request)
 	helpers.FatalIfError(err)
 
-	
 	fmt.Println("terminating instance")
 
 	// should retry condition check which returns a bool value indicating whether to do retry or not
@@ -297,7 +310,7 @@ func (d *Driver) Remove() error {
 		RequestMetadata: helpers.GetRequestMetadataWithCustomizedRetryPolicy(shouldRetryFunc),
 	}
 
-	pollGetRequest.InstanceId=d.InstanceID
+	pollGetRequest.InstanceId = &(d.InstanceID)
 	_, pollErr := c.GetInstance(ctx, pollGetRequest)
 	helpers.FatalIfError(pollErr)
 	fmt.Println("instance terminated")
@@ -307,7 +320,7 @@ func (d *Driver) Remove() error {
 // GetIP returns public IP address or hostname of the machine instance.
 func (d *Driver) GetIP() (string, error) {
 
-	log.Debugf("Machine IP address resolved to: %s", d.resolvedIP)
+	log.Debugf("Machine IP address resolved to: %s", &(d.resolvedIP))
 	return d.resolvedIP, nil
 }
 
@@ -346,10 +359,10 @@ func (d *Driver) Restart() error {
 	ctx := context.Background()
 
 	request := core.InstanceActionRequest{}
-	request.InstanceId=d.InstanceID
-	request.Action=core.InstanceActionActionEnum("SOFTRESET")
+	request.InstanceId = &(d.InstanceID)
+	request.Action = core.InstanceActionActionEnum("SOFTRESET")
 
-	_, err = c.InstanceAction(ctx , request) 
+	_, err = c.InstanceAction(ctx, request)
 	helpers.FatalIfError(err)
 
 	return err
@@ -363,28 +376,28 @@ func (d *Driver) Kill() error {
 	return d.Stop()
 }
 
-// 
-func (d *Driver) listCompartments(ctx context.Context, c core.IdentityClient, compartmentID *string) ([]identity.Compartment,error) {
-	request := core.ListCompartmentsRequest{
+//
+func (d *Driver) listCompartments(ctx context.Context, c identity.IdentityClient, compartmentID *string) ([]identity.Compartment, error) {
+	request := identity.ListCompartmentsRequest{
 		CompartmentId: compartmentID,
 	}
 
-	r, err := c.ListCompartments(ctx, request, tenancy)
+	r, err := c.ListCompartments(ctx, request)
 	helpers.FatalIfError(err)
 
 	return r.Items, err
 }
 
-func (d *Driver) getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) （*string, error) {
+func (d *Driver) getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) (*string, error) {
 	c, clerr := identity.NewIdentityClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 		return nil, clerr
 	}
-	Compartments := listCompartments(ctx, c, d.tenancy)
+	Compartments, _ := d.listCompartments(ctx, c, &(d.tenancy))
 
 	for _, compartment := range Compartments {
-		if *compartment.DisplayName == compartmentName {
+		if *compartment.Name == compartmentName {
 			// VCN already created, return it
 			return compartment.Id, nil
 		}
@@ -394,7 +407,7 @@ func (d *Driver) getCompartmentID(ctx context.Context, provider common.Configura
 }
 
 // ListImages lists the available images in the specified compartment.
-func (d *Driver) listImages(ctx context.Context, c core.ComputeClient, compartmentID *string) ([]core.Image,error) {
+func (d *Driver) listImages(ctx context.Context, c core.ComputeClient, compartmentID *string) ([]core.Image, error) {
 	request := core.ListImagesRequest{
 		CompartmentId: compartmentID,
 	}
@@ -405,13 +418,12 @@ func (d *Driver) listImages(ctx context.Context, c core.ComputeClient, compartme
 	return r.Items, err
 }
 
-
-func (d *Driver) getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) (*string,error){
-	c, clerr := core.NewVirtualNetworkClientWithConfigurationProvider(provider)
+func (d *Driver) getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) (*string, error) {
+	c, clerr := core.NewComputeClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 	}
-	Images := listImages(ctx, c, d.tenancy)
+	Images, _ := d.listImages(ctx, c, &(d.tenancy))
 
 	for _, image := range Images {
 		if *image.DisplayName == imageName {
