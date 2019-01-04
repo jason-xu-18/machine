@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"os/user"
+	"path"
 
 	"github.com/docker/machine/libmachine/drivers"
 	"github.com/docker/machine/libmachine/log"
@@ -42,13 +45,16 @@ type Driver struct {
 }
 
 const (
-	defaultSSHUser            = "docker-user"
-	defaultOciAvailableDomain = "eXkP:PHX-AD-1"
+	defaultSSHUser            = "opc"
+	defaultOciAvailableDomain = "eXkP:PHX-AD-2"
 	defaultOciShape           = "VM.Standard2.1"
 	defaultOciFaultDomain     = "FAULT-DOMAIN-1"
-	defaultOciImageName       = "Oracle Linux 7.6"
-	defaultOciVCNName         = "OCI-GOSDK-Sample-VCN"
-	defaultOciSubnetName      = "OCI-GOSDK-Sample-Subnet2"
+	defaultOciImageName       = "Oracle-Linux-7.5-2018.10.16-0"
+	//defaultOciVCNName         = "OCI-GOSDK-Sample-VCN"
+	//defaultOciSubnetName      = "OCI-GOSDK-Sample-Subnet2"
+	defaultOciVCNName         = "vcn20190102161726"
+	defaultOciSubnetName      = "Public Subnet eXkP:PHX-AD-1"
+	defaultOciCompartmentName = "Arancher"
 )
 
 const (
@@ -58,6 +64,7 @@ const (
 	flagOciImageName       = "oci-image"
 	flagOciVCNName         = "oci-vnet"
 	flagOciSubnetName      = "oci-subnet"
+	flagOciCompartmentName = "oci-compartment"
 )
 
 const (
@@ -115,13 +122,14 @@ func (d *Driver) Start() error {
 
 // GetState returns the state of the virtual machine role instance.
 func (d *Driver) GetState() (state.State, error) {
-	fmt.Println("Getting state of instance")
+	fmt.Println("Getting state of Oci instance")
 	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
 	helpers.FatalIfError(err)
 	ctx := context.Background()
 
 	request := core.GetInstanceRequest{}
 	request.InstanceId = &(d.InstanceID)
+	fmt.Println("request.InstanceId", *(request.InstanceId))
 
 	response, err := c.GetInstance(ctx, request)
 	lifecycleState := response.Instance.LifecycleState
@@ -173,6 +181,12 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			EnvVar: "OCI_SUBNET_NAME",
 			Value:  defaultOciSubnetName,
 		},
+		mcnflag.StringFlag{
+			Name:   flagOciCompartmentName,
+			Usage:  "The display name of compartment",
+			EnvVar: "OCI_COMPARTMENT_NAME",
+			Value:  defaultOciCompartmentName,
+		},
 	}
 }
 
@@ -192,6 +206,7 @@ func (d *Driver) SetConfigFromFlags(fl drivers.DriverOptions) error {
 		{&d.AvailabilityDomain, flagOciAvailableDomain},
 		{&d.FaultDomain, flagOciFaultDomain},
 		{&d.Shape, flagOciShape},
+		{&d.CompartmentName, flagOciCompartmentName},
 	}
 	for _, f := range flags {
 		*f.target = fl.String(f.flag)
@@ -226,23 +241,42 @@ func (d *Driver) PreCreateCheck() (err error) {
 // Create creates the virtual machine.
 func (d *Driver) Create() error {
 	fmt.Println("Prepareing launching request.")
+
+	homeFolder := getHomeFolder()
+	fmt.Println("homeFolder:", homeFolder)
+
 	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
-	fmt.Println("New compute client success, err:", err)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
 	helpers.FatalIfError(err)
 	ctx := context.Background()
 	request := core.LaunchInstanceRequest{}
 
-	request.DisplayName = &(d.DisplayName)
+	//request.DisplayName = &(d.DisplayName)
+	request.DisplayName = common.String("DM-Sample-Instance")
+	fmt.Println("#####request.DisplayName:", *(request.DisplayName))
 	request.AvailabilityDomain = &(d.AvailabilityDomain)
+	fmt.Println("#####request.AvailabilityDomain:", *(request.AvailabilityDomain))
 	request.Shape = &(d.Shape)
-	fmt.Println("Before get compartmentID")
+	fmt.Println("#####request.Shape:", *(request.Shape))
+	subnetid := "ocid1.subnet.oc1.phx.aaaaaaaalczycwrl45llhmqqibdqgz4ddetkg6uvmpjl27i5dw5wzsiac6eq"
+	request.SubnetId = &subnetid
+	fmt.Println("#####request.SubnetId:", *(request.SubnetId))
+	fmt.Println("#####Before get compartmentID")
+	fmt.Println("#####CompartmentName:", d.CompartmentName)
 	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
 	}
 
+	fmt.Println("#####compartmentID:", *compartmentID)
+
 	request.CompartmentId = compartmentID
+	fmt.Println("#####request.CompartmentId:", *(request.CompartmentId))
 
 	imageid, err := d.getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
 	if err != nil {
@@ -250,11 +284,25 @@ func (d *Driver) Create() error {
 		return err
 	}
 
-	request.ImageId = imageid
+	fmt.Println("imageid:", *imageid)
 
+	request.ImageId = imageid
+	fmt.Println("#####request.ImageId:", *(request.ImageId))
 	request.RequestMetadata = helpers.GetRequestMetadataWithDefaultRetryPolicy()
 
+	metadata := map[string]string{
+		"user_data":           "dW5kZWZpbmVk",
+		"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDd25ZgCEms2Cnt922S4PZVQolmvPDLJsWG8dAGEijlqPh7vepzJvCayaIymU6C6DEDtAqRN/CPm6tcIG/TFvy4al9pseIXAngfPfwNoC1jYdBYM941cEt2legcmkBCoB/wIK69SefRbO3nfbLxh/2ebtRWTJey5658wUS3JODoE9wd22EAg87I0P2Fbpo1W3kVZqF+cj7x0+t1ewZ4Rg2Bf98+hs9U9JmnmgPdk7cpo9CfF6FoiSRMMWb1kxaqESP8Q/gleajk6g1GZQkE7hEy9OxwI1QpLaAy/557vD/wJ5C0di9h+dA5gYe0QXeBeZ6zPlllJhilWehPtJIfT5hC57ks9+fBwZPqNwE92lICq5tiU8PfpamqRb1F1KiPN88G2fNUKGJHejN5DziKw6b4+RzzLneRv5VtK/FGm9wPGRdRhLzi7Wk59um9NDvd63GDV5ebQCjYBOGd1B82S9bpZlSHoewWXL9yavL5un5X8+/fETXlUkkKB4DRuKU6/aSbe0tKynngY0ZsdyJ/OcS1UbibOAXrt/AYl2/g15gWFYIRvm7VC20immiT4wf1B2fi87o5fbHfWuViJsxhjG4Eb1/0rTkJCTPV8RnNnjiKUJ9k7SRsw+NaK88MNFye0E7sTvl3Z+5vcuKZRatSVdRuP0XztvfyjXmlx2goM/dWMw== jet_sample_ww_grp@oracle.com",
+	}
+
+	request.Metadata = metadata
+
 	createResp, err := c.LaunchInstance(ctx, request)
+
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
 	fmt.Println("Launching Oci instance.")
 
 	// should retry condition check which returns a bool value indicating whether to do retry or not
@@ -274,13 +322,17 @@ func (d *Driver) Create() error {
 	_, pollError := c.GetInstance(ctx, pollingGetRequest)
 	helpers.FatalIfError(pollError)
 
+	d.InstanceID = *(createResp.Instance.Id)
 	fmt.Println("Oci instance launched")
+
+	d.getIPs()
 
 	return nil
 }
 
 // Remove deletes the virtual machine and resources associated to it.
 func (d *Driver) Remove() error {
+	return nil
 	// NOTE In Oci, there is no remove option for virtual
 	// machines, terminate is the closest option.
 	log.Debug("Oci does not implement remove. Calling terminate instead.")
@@ -320,7 +372,8 @@ func (d *Driver) Remove() error {
 // GetIP returns public IP address or hostname of the machine instance.
 func (d *Driver) GetIP() (string, error) {
 
-	log.Debugf("Machine IP address resolved to: %s", &(d.resolvedIP))
+	log.Debugf("OCI Machine IP address resolved to:", &(d.resolvedIP))
+	fmt.Println("OCI Machine IP address resolved to:", d.resolvedIP)
 	return d.resolvedIP, nil
 }
 
@@ -383,21 +436,39 @@ func (d *Driver) listCompartments(ctx context.Context, c identity.IdentityClient
 	}
 
 	r, err := c.ListCompartments(ctx, request)
+
+	if err != nil {
+		fmt.Println("Error:", err)
+		return nil, err
+	}
+
 	helpers.FatalIfError(err)
 
 	return r.Items, err
 }
 
 func (d *Driver) getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) (*string, error) {
+	fmt.Println("inside getCompartmentID")
 	c, clerr := identity.NewIdentityClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 		return nil, clerr
 	}
-	Compartments, _ := d.listCompartments(ctx, c, &(d.tenancy))
+
+	fmt.Println("NewIdentityClientWithConfigurationProvider success")
+	tt := "ocid1.tenancy.oc1..aaaaaaaashw7efstoxf6v46gevtascttepw3l3d6xxx4gziexn5sxnldyhja"
+	//Compartments, lerr := d.listCompartments(ctx, c, &(d.tenancy))
+	Compartments, lerr := d.listCompartments(ctx, c, &tt)
+	if lerr != nil {
+		fmt.Println("Error:", lerr)
+		return nil, lerr
+	}
+
+	fmt.Println("listCompartments success")
 
 	for _, compartment := range Compartments {
-		if *compartment.Name == compartmentName {
+		//fmt.Println("compartment:", *(compartment.Name))
+		if *(compartment.Name) == compartmentName {
 			// VCN already created, return it
 			return compartment.Id, nil
 		}
@@ -419,18 +490,110 @@ func (d *Driver) listImages(ctx context.Context, c core.ComputeClient, compartme
 }
 
 func (d *Driver) getImageID(ctx context.Context, provider common.ConfigurationProvider, imageName string) (*string, error) {
+	fmt.Println("inside getImageID")
 	c, clerr := core.NewComputeClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 	}
-	Images, _ := d.listImages(ctx, c, &(d.tenancy))
+	tt := "ocid1.tenancy.oc1..aaaaaaaashw7efstoxf6v46gevtascttepw3l3d6xxx4gziexn5sxnldyhja"
+	//Images, _ := d.listImages(ctx, c, &(d.tenancy))
+	Images, _ := d.listImages(ctx, c, &tt)
 
 	for _, image := range Images {
-		if *image.DisplayName == imageName {
+		//fmt.Println("image name:", *(image.DisplayName))
+		if *(image.DisplayName) == imageName {
 			// VCN already created, return it
 			return image.Id, nil
 		}
 	}
 	err := fmt.Errorf("Can't find Image with name %s", imageName)
 	return nil, err
+}
+
+func getHomeFolder() string {
+	current, e := user.Current()
+	if e != nil {
+		//Give up and try to return something sensible
+		home := os.Getenv("HOME")
+		if home == "" {
+			home = os.Getenv("USERPROFILE")
+		}
+		return home
+	}
+	return current.HomeDir
+}
+
+// getIPs returns public IP address or hostname of the machine instance.
+func (d *Driver) getIPs() {
+	fmt.Println("Start to get private ip")
+	ctx := context.Background()
+
+	// Create compute client to manipulate instance
+	cc, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
+	helpers.FatalIfError(err)
+
+	// Step 1: List attached vnic for specified instance
+	req1 := core.ListVnicAttachmentsRequest{}
+
+	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	fmt.Println("#####compartmentID:", *compartmentID)
+
+	req1.CompartmentId = compartmentID
+	req1.InstanceId = &(d.InstanceID)
+	//req1.CompartmentId = common.String("ocid1.tenancy.oc1..aaaaaaaashw7efstoxf6v46gevtascttepw3l3d6xxx4gziexn5sxnldyhja")
+	//req1.InstanceId = common.String("ocid1.instance.oc1.phx.abyhqljsxxlqrfzioipa4vrr2bwjqxxnmzjidh2kayp4yvzqrw6lyrqkzczq")
+
+	resp1, err := cc.ListVnicAttachments(ctx, req1)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	// Step 2: Get ocid of vnic pos 0
+	vnicID := resp1.Items[0].VnicId
+
+	// Step 3: Get vnic by ocid
+	vnc, err := core.NewVirtualNetworkClientWithConfigurationProvider(common.DefaultConfigProvider())
+	helpers.FatalIfError(err)
+	req2 := core.GetVnicRequest{}
+	req2.VnicId = vnicID
+	resp2, err := vnc.GetVnic(ctx, req2)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	// Step 4: Get private ip & public ip from vnic
+	privateIP := resp2.PrivateIp
+	publicIP := resp2.PublicIp
+
+	fmt.Println("Private ip is: ", *privateIP)
+	fmt.Println("Public ip is: ", *publicIP)
+
+	d.resolvedIP = *publicIP
+}
+
+// GetSSHKeyPath returns the ssh key path
+func (d *Driver) GetSSHKeyPath() string {
+
+	if d.SSHKeyPath == "" {
+		homeFolder := getHomeFolder()
+		d.SSHKeyPath = path.Join(homeFolder, ".oci", "id_rsa_jet")
+	}
+	fmt.Println("SSHKeyPath is: ", d.SSHKeyPath)
+	return d.SSHKeyPath
+
+}
+
+// GetSSHUsername returns the ssh user name, opc if not specified
+func (d *Driver) GetSSHUsername() string {
+	if d.SSHUser == "" {
+		d.SSHUser = "opc"
+	}
+	return d.SSHUser
 }
