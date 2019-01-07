@@ -41,20 +41,23 @@ type Driver struct {
 
 	DockerPort int
 
+	privateIP  string
 	resolvedIP string
 }
 
 const (
-	defaultSSHUser            = "opc"
+	defaultSSHUser            = "ubuntu"
 	defaultOciAvailableDomain = "eXkP:PHX-AD-2"
 	defaultOciShape           = "VM.Standard2.1"
 	defaultOciFaultDomain     = "FAULT-DOMAIN-1"
-	defaultOciImageName       = "Oracle-Linux-7.5-2018.10.16-0"
+	//defaultOciImageName       = "Oracle-Linux-7.5-2018.10.16-0"
+	defaultOciImageName = "Canonical-Ubuntu-18.04-2018.12.10-0"
 	//defaultOciVCNName         = "OCI-GOSDK-Sample-VCN"
 	//defaultOciSubnetName      = "OCI-GOSDK-Sample-Subnet2"
 	defaultOciVCNName         = "vcn20190102161726"
 	defaultOciSubnetName      = "Public Subnet eXkP:PHX-AD-1"
 	defaultOciCompartmentName = "Arancher"
+	defaultOciDockerPort      = 2376
 )
 
 const (
@@ -82,6 +85,7 @@ func NewDriver(hostName, storePath string) drivers.Driver {
 			MachineName: hostName,
 			StorePath:   storePath,
 		},
+		DockerPort: defaultOciDockerPort,
 	}
 	return d
 }
@@ -255,25 +259,24 @@ func (d *Driver) Create() error {
 	ctx := context.Background()
 	request := core.LaunchInstanceRequest{}
 
-	//request.DisplayName = &(d.DisplayName)
-	request.DisplayName = common.String("DM-Sample-Instance")
-	fmt.Println("#####request.DisplayName:", *(request.DisplayName))
+	request.DisplayName = &(d.MachineName)
+	//	fmt.Println("#####request.DisplayName:", *(request.DisplayName))
 	request.AvailabilityDomain = &(d.AvailabilityDomain)
-	fmt.Println("#####request.AvailabilityDomain:", *(request.AvailabilityDomain))
+	//	fmt.Println("#####request.AvailabilityDomain:", *(request.AvailabilityDomain))
 	request.Shape = &(d.Shape)
 	fmt.Println("#####request.Shape:", *(request.Shape))
 	subnetid := "ocid1.subnet.oc1.phx.aaaaaaaalczycwrl45llhmqqibdqgz4ddetkg6uvmpjl27i5dw5wzsiac6eq"
 	request.SubnetId = &subnetid
-	fmt.Println("#####request.SubnetId:", *(request.SubnetId))
-	fmt.Println("#####Before get compartmentID")
-	fmt.Println("#####CompartmentName:", d.CompartmentName)
+	//	fmt.Println("#####request.SubnetId:", *(request.SubnetId))
+	//	fmt.Println("#####Before get compartmentID")
+	//	fmt.Println("#####CompartmentName:", d.CompartmentName)
 	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
 	}
 
-	fmt.Println("#####compartmentID:", *compartmentID)
+	//fmt.Println("#####compartmentID:", *compartmentID)
 
 	request.CompartmentId = compartmentID
 	fmt.Println("#####request.CompartmentId:", *(request.CompartmentId))
@@ -287,7 +290,7 @@ func (d *Driver) Create() error {
 	fmt.Println("imageid:", *imageid)
 
 	request.ImageId = imageid
-	fmt.Println("#####request.ImageId:", *(request.ImageId))
+	//fmt.Println("#####request.ImageId:", *(request.ImageId))
 	request.RequestMetadata = helpers.GetRequestMetadataWithDefaultRetryPolicy()
 
 	metadata := map[string]string{
@@ -325,7 +328,10 @@ func (d *Driver) Create() error {
 	d.InstanceID = *(createResp.Instance.Id)
 	fmt.Println("Oci instance launched")
 
-	d.getIPs()
+	d.resolvedIP, d.privateIP = d.getIPs()
+
+	fmt.Printf("d struct = %+v\n", d)
+	fmt.Printf("d struct = %+v\n", *(d.BaseDriver))
 
 	return nil
 }
@@ -372,6 +378,7 @@ func (d *Driver) Remove() error {
 // GetIP returns public IP address or hostname of the machine instance.
 func (d *Driver) GetIP() (string, error) {
 
+	d.resolvedIP, d.privateIP = d.getIPs()
 	log.Debugf("OCI Machine IP address resolved to:", &(d.resolvedIP))
 	fmt.Println("OCI Machine IP address resolved to:", d.resolvedIP)
 	return d.resolvedIP, nil
@@ -393,6 +400,7 @@ func (d *Driver) GetURL() (string, error) {
 	// actually created and provisioned. By then GetIP() should be returning
 	// a non-empty IP address as the VM is already allocated and connected to.
 	ip, err := d.GetIP()
+	d.DockerPort = 2376
 	if err != nil {
 		return "", err
 	}
@@ -401,6 +409,7 @@ func (d *Driver) GetURL() (string, error) {
 		Host:   net.JoinHostPort(ip, fmt.Sprintf("%d", d.DockerPort)),
 	}).String()
 	log.Debugf("Machine URL is resolved to: %s", u)
+	fmt.Println("Machine URL is resolved to:", u)
 	return u, nil
 }
 
@@ -448,14 +457,14 @@ func (d *Driver) listCompartments(ctx context.Context, c identity.IdentityClient
 }
 
 func (d *Driver) getCompartmentID(ctx context.Context, provider common.ConfigurationProvider, compartmentName string) (*string, error) {
-	fmt.Println("inside getCompartmentID")
+	//fmt.Println("inside getCompartmentID")
 	c, clerr := identity.NewIdentityClientWithConfigurationProvider(provider)
 	if clerr != nil {
 		fmt.Println("Error:", clerr)
 		return nil, clerr
 	}
 
-	fmt.Println("NewIdentityClientWithConfigurationProvider success")
+	//fmt.Println("NewIdentityClientWithConfigurationProvider success")
 	tt := "ocid1.tenancy.oc1..aaaaaaaashw7efstoxf6v46gevtascttepw3l3d6xxx4gziexn5sxnldyhja"
 	//Compartments, lerr := d.listCompartments(ctx, c, &(d.tenancy))
 	Compartments, lerr := d.listCompartments(ctx, c, &tt)
@@ -464,7 +473,7 @@ func (d *Driver) getCompartmentID(ctx context.Context, provider common.Configura
 		return nil, lerr
 	}
 
-	fmt.Println("listCompartments success")
+	//fmt.Println("listCompartments success")
 
 	for _, compartment := range Compartments {
 		//fmt.Println("compartment:", *(compartment.Name))
@@ -524,8 +533,8 @@ func getHomeFolder() string {
 }
 
 // getIPs returns public IP address or hostname of the machine instance.
-func (d *Driver) getIPs() {
-	fmt.Println("Start to get private ip")
+func (d *Driver) getIPs() (string, string) {
+	fmt.Println("Start to get IPs")
 	ctx := context.Background()
 
 	// Create compute client to manipulate instance
@@ -538,7 +547,6 @@ func (d *Driver) getIPs() {
 	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
 	}
 
 	fmt.Println("#####compartmentID:", *compartmentID)
@@ -551,7 +559,6 @@ func (d *Driver) getIPs() {
 	resp1, err := cc.ListVnicAttachments(ctx, req1)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
 	}
 
 	// Step 2: Get ocid of vnic pos 0
@@ -565,17 +572,18 @@ func (d *Driver) getIPs() {
 	resp2, err := vnc.GetVnic(ctx, req2)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
 	}
 
 	// Step 4: Get private ip & public ip from vnic
+
 	privateIP := resp2.PrivateIp
 	publicIP := resp2.PublicIp
 
 	fmt.Println("Private ip is: ", *privateIP)
 	fmt.Println("Public ip is: ", *publicIP)
 
-	d.resolvedIP = *publicIP
+	return *publicIP, *privateIP
+
 }
 
 // GetSSHKeyPath returns the ssh key path
@@ -593,7 +601,7 @@ func (d *Driver) GetSSHKeyPath() string {
 // GetSSHUsername returns the ssh user name, opc if not specified
 func (d *Driver) GetSSHUsername() string {
 	if d.SSHUser == "" {
-		d.SSHUser = "opc"
+		d.SSHUser = "ubuntu"
 	}
 	return d.SSHUser
 }
