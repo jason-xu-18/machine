@@ -48,13 +48,14 @@ type Driver struct {
 const (
 	defaultSSHUser            = "ubuntu"
 	defaultOciAvailableDomain = "eXkP:PHX-AD-2"
-	defaultOciShape           = "VM.Standard2.1"
-	defaultOciFaultDomain     = "FAULT-DOMAIN-1"
+	//defaultOciAvailableDomain = "eXkP:US-ASHBURN-AD-1"
+	defaultOciShape       = "VM.Standard2.1"
+	defaultOciFaultDomain = "FAULT-DOMAIN-1"
 	//defaultOciImageName       = "Oracle-Linux-7.5-2018.10.16-0"
 	defaultOciImageName = "Canonical-Ubuntu-18.04-2018.12.10-0"
 	//defaultOciVCNName         = "OCI-GOSDK-Sample-VCN"
 	//defaultOciSubnetName      = "OCI-GOSDK-Sample-Subnet2"
-	defaultOciVCNName         = "vcn20190102161726"
+	defaultOciVCNName         = "Arancher_vcn"
 	defaultOciSubnetName      = "Public Subnet eXkP:PHX-AD-1"
 	defaultOciCompartmentName = "Arancher"
 	defaultOciDockerPort      = 2376
@@ -262,12 +263,16 @@ func (d *Driver) Create() error {
 	request.DisplayName = &(d.MachineName)
 	//	fmt.Println("#####request.DisplayName:", *(request.DisplayName))
 	request.AvailabilityDomain = &(d.AvailabilityDomain)
-	//	fmt.Println("#####request.AvailabilityDomain:", *(request.AvailabilityDomain))
+	fmt.Println("#####request.AvailabilityDomain:", *(request.AvailabilityDomain))
 	request.Shape = &(d.Shape)
 	fmt.Println("#####request.Shape:", *(request.Shape))
-	subnetid := "ocid1.subnet.oc1.phx.aaaaaaaalczycwrl45llhmqqibdqgz4ddetkg6uvmpjl27i5dw5wzsiac6eq"
+
+	//  Public Subnet eXkP:PHX-AD-2 of VCN: vcn2Dns
+	subnetid := "ocid1.subnet.oc1.phx.aaaaaaaafucd2aynymv7c3bs6wygjt42e7hjgwobig7shqokb3fwyjaifr6q"
+	//  Public Subnet eXkP:US-ASHBURN-AD-1 of VCN: vcn2Dns
+	//subnetid := "ocid1.subnet.oc1.iad.aaaaaaaa4c3wyrybnammvwdxf2nd66glsac5mcezxofvyoet3urycqb7xjda"
 	request.SubnetId = &subnetid
-	//	fmt.Println("#####request.SubnetId:", *(request.SubnetId))
+	//fmt.Println("#####request.SubnetId:", *(request.SubnetId))
 	//	fmt.Println("#####Before get compartmentID")
 	//	fmt.Println("#####CompartmentName:", d.CompartmentName)
 	compartmentID, err := d.getCompartmentID(ctx, common.DefaultConfigProvider(), d.CompartmentName)
@@ -279,14 +284,15 @@ func (d *Driver) Create() error {
 	//fmt.Println("#####compartmentID:", *compartmentID)
 
 	request.CompartmentId = compartmentID
-	fmt.Println("#####request.CompartmentId:", *(request.CompartmentId))
+	//fmt.Println("#####request.CompartmentId:", *(request.CompartmentId))
 
 	imageid, err := d.getImageID(ctx, common.DefaultConfigProvider(), d.ImageName)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return err
 	}
-
+	//Oracle-Linux-7.6-2018.12.19-0
+	//imageid = "ocid1.image.oc1.phx.aaaaaaaaklifrcpkhjgszalaoitdshyxbxog3wm5ccol55m2apw3fg3mjndq"
 	fmt.Println("imageid:", *imageid)
 
 	request.ImageId = imageid
@@ -329,9 +335,15 @@ func (d *Driver) Create() error {
 	fmt.Println("Oci instance launched")
 
 	d.resolvedIP, d.privateIP = d.getIPs()
+	d.IPAddress = d.resolvedIP
+	d.SSHUser = "ubuntu"
+	d.SSHPort = 22
+	d.SSHKeyPath = "/home/feiyang/keys/id_rsa_jet"
 
-	fmt.Printf("d struct = %+v\n", d)
-	fmt.Printf("d struct = %+v\n", *(d.BaseDriver))
+	fmt.Printf("Driver struct = %+v\n", d)
+	fmt.Printf("BaseDriver struct = %+v\n", *(d.BaseDriver))
+
+	ConfigIPtables(*d)
 
 	return nil
 }
@@ -378,10 +390,11 @@ func (d *Driver) Remove() error {
 // GetIP returns public IP address or hostname of the machine instance.
 func (d *Driver) GetIP() (string, error) {
 
-	d.resolvedIP, d.privateIP = d.getIPs()
 	log.Debugf("OCI Machine IP address resolved to:", &(d.resolvedIP))
-	fmt.Println("OCI Machine IP address resolved to:", d.resolvedIP)
-	return d.resolvedIP, nil
+	fmt.Println("OCI Machine resolvedIP resolved to:", d.resolvedIP)
+	fmt.Println("OCI Machine IPAddress resolved to:", d.IPAddress)
+	//return d.resolvedIP, nil
+	return d.IPAddress, nil
 }
 
 // GetSSHHostname returns an IP address or hostname for the machine instance.
