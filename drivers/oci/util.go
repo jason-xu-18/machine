@@ -2,6 +2,7 @@ package oci
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/docker/machine/libmachine/log"
 	"github.com/docker/machine/libmachine/mcnutils"
@@ -123,11 +124,19 @@ func sshAvailableFunc(d Driver) func() bool {
 
 func ConfigIPtables(d Driver) (string, error) {
 	WaitForSSH(d)
+	portCommand := ""
+	ports := strings.Split(d.OpenPorts, ",")
+	for i := range ports {
+		s := strings.Split(i, "/")
+		protocal, port := s[0], s[1]
+		fmt.Println(ip, port)
+		portCommand += "sed -i \"/--dport 22/a\\-A INPUT -p protocal -m state --state NEW -m protocal --dport port -j ACCEPT\" firewall.txt"
+	}
 
 	commands := []string{
 		"pwd",
 		"sudo iptables-save > $HOME/firewall.txt",
-		"sed -i \"/--dport 22/a\\-A INPUT -p tcp -m state --state NEW -m tcp --dport 2376 -j ACCEPT\" firewall.txt",
+		portCommand,
 		"sudo iptables-restore < $HOME/firewall.txt",
 		"sudo ufw reload",
 		"sudo ufw enable",
