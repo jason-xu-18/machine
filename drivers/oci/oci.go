@@ -23,7 +23,11 @@ import (
 type Driver struct {
 	*drivers.BaseDriver
 
-	tenancy string
+	tenancy     string
+	user        string
+	region      string
+	fingerprint string
+	privateKey  string
 
 	CompartmentName    string
 	DisplayName        string
@@ -239,7 +243,38 @@ func (d *Driver) PreCreateCheck() (err error) {
 	//     virtual network is in a different region.
 	//   - Changing IP Address space of a subnet would fail if there are machines
 	//     running in the Virtual Network.
+	err = d.checkLogin()
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
 	log.Info("Completed machine pre-create checks.")
+	return nil
+}
+
+func (d *Driver) checkLogin() (err error) {
+
+	provider := common.NewRawConfigurationProvider(d.tenancy, d.user, d.region, d.fingerprint, d.privateKey, nil)
+	ctx := context.Background()
+	c, err := identity.NewIdentityClientWithConfigurationProvider(provider)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	request := identity.ListAvailabilityDomainsRequest{
+		CompartmentId: &(d.tenancy),
+	}
+
+	_, err = c.ListAvailabilityDomains(ctx, request)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return err
+	}
+
+	fmt.Println("succeed to configure oci oauth")
+	log.Info("succeed to configure oci oauth")
 	return nil
 }
 
