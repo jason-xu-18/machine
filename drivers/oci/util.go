@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/docker/machine/drivers/driverutil"
 	"github.com/docker/machine/libmachine/log"
 	"github.com/docker/machine/libmachine/mcnutils"
 	"github.com/docker/machine/libmachine/ssh"
@@ -124,23 +125,32 @@ func sshAvailableFunc(d Driver) func() bool {
 
 func ConfigIPtables(d Driver) (string, error) {
 	WaitForSSH(d)
-	portCommand := ""
-	ports := strings.Split(d.OpenPorts, ",")
-	for i := range ports {
-		s := strings.Split(i, "/")
-		protocal, port := s[0], s[1]
-		fmt.Println(ip, port)
-		portCommand += "sed -i \"/--dport 22/a\\-A INPUT -p protocal -m state --state NEW -m protocal --dport port -j ACCEPT\" firewall.txt"
-	}
 
-	commands := []string{
+	preCommands := []string{
 		"pwd",
 		"sudo iptables-save > $HOME/firewall.txt",
-		portCommand,
+		"sed -i \"/--dport 22/a\\-A INPUT -p tcp -m state --state NEW -m tcp --dport 2376 -j ACCEPT\" firewall.txt",
+	}
+	portCommands := []string{}
+	afterCommands := []string{
 		"sudo iptables-restore < $HOME/firewall.txt",
 		"sudo ufw reload",
 		"sudo ufw enable",
 	}
+
+	command := "sed -i \"/--dport 22/a\\-A INPUT -p protocal -m state --state NEW -m protocal --dport port -j ACCEPT\" firewall.txt"
+	for _, p := range d.OpenPorts {
+		port, protocol := driverutil.SplitPortProto(p)
+		fmt.Println(port, protocol)
+		c1 := strings.Replace(command, "protocal", protocol, -1)
+		c2 := strings.Replace(c1, " port", " "+port, -1)
+		fmt.Println(c2)
+		portCommands = append(portCommands, c2)
+	}
+
+	commands := append(preCommands, portCommands...)
+	commands = append(commands, afterCommands...)
+
 	output, err := RunMultiSSHCommandFromDriver(d, commands)
 
 	if err != nil {

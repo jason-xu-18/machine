@@ -3,15 +3,17 @@ package oci
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/url"
 	"os"
 	"os/user"
-	"path"
 
 	"github.com/docker/machine/libmachine/drivers"
 	"github.com/docker/machine/libmachine/log"
 	"github.com/docker/machine/libmachine/mcnflag"
+	"github.com/docker/machine/libmachine/mcnutils"
+	"github.com/docker/machine/libmachine/ssh"
 	"github.com/docker/machine/libmachine/state"
 	"github.com/oracle/oci-go-sdk/common"
 	"github.com/oracle/oci-go-sdk/core"
@@ -38,12 +40,15 @@ type Driver struct {
 	Shape              string
 	SubnetName         string
 
+	SSHPrivateKeyPath string
+
 	// default retry policy will retry on non-200 response
 	RequestMetadata common.RequestMetadata
 
 	InstanceID string
 
 	DockerPort int
+	OpenPorts  []string
 
 	privateIP  string
 	resolvedIP string
@@ -334,9 +339,16 @@ func (d *Driver) Create() error {
 	//fmt.Println("#####request.ImageId:", *(request.ImageId))
 	request.RequestMetadata = helpers.GetRequestMetadataWithDefaultRetryPolicy()
 
+	d.createKeyPair()
+	publicKey, err := ioutil.ReadFile(d.GetSSHKeyPath() + ".pub")
+
+	// metadata := map[string]string{
+	// 	"user_data":           "dW5kZWZpbmVk",
+	// 	"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDd25ZgCEms2Cnt922S4PZVQolmvPDLJsWG8dAGEijlqPh7vepzJvCayaIymU6C6DEDtAqRN/CPm6tcIG/TFvy4al9pseIXAngfPfwNoC1jYdBYM941cEt2legcmkBCoB/wIK69SefRbO3nfbLxh/2ebtRWTJey5658wUS3JODoE9wd22EAg87I0P2Fbpo1W3kVZqF+cj7x0+t1ewZ4Rg2Bf98+hs9U9JmnmgPdk7cpo9CfF6FoiSRMMWb1kxaqESP8Q/gleajk6g1GZQkE7hEy9OxwI1QpLaAy/557vD/wJ5C0di9h+dA5gYe0QXeBeZ6zPlllJhilWehPtJIfT5hC57ks9+fBwZPqNwE92lICq5tiU8PfpamqRb1F1KiPN88G2fNUKGJHejN5DziKw6b4+RzzLneRv5VtK/FGm9wPGRdRhLzi7Wk59um9NDvd63GDV5ebQCjYBOGd1B82S9bpZlSHoewWXL9yavL5un5X8+/fETXlUkkKB4DRuKU6/aSbe0tKynngY0ZsdyJ/OcS1UbibOAXrt/AYl2/g15gWFYIRvm7VC20immiT4wf1B2fi87o5fbHfWuViJsxhjG4Eb1/0rTkJCTPV8RnNnjiKUJ9k7SRsw+NaK88MNFye0E7sTvl3Z+5vcuKZRatSVdRuP0XztvfyjXmlx2goM/dWMw== jet_sample_ww_grp@oracle.com",
+	// }
 	metadata := map[string]string{
 		"user_data":           "dW5kZWZpbmVk",
-		"ssh_authorized_keys": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDd25ZgCEms2Cnt922S4PZVQolmvPDLJsWG8dAGEijlqPh7vepzJvCayaIymU6C6DEDtAqRN/CPm6tcIG/TFvy4al9pseIXAngfPfwNoC1jYdBYM941cEt2legcmkBCoB/wIK69SefRbO3nfbLxh/2ebtRWTJey5658wUS3JODoE9wd22EAg87I0P2Fbpo1W3kVZqF+cj7x0+t1ewZ4Rg2Bf98+hs9U9JmnmgPdk7cpo9CfF6FoiSRMMWb1kxaqESP8Q/gleajk6g1GZQkE7hEy9OxwI1QpLaAy/557vD/wJ5C0di9h+dA5gYe0QXeBeZ6zPlllJhilWehPtJIfT5hC57ks9+fBwZPqNwE92lICq5tiU8PfpamqRb1F1KiPN88G2fNUKGJHejN5DziKw6b4+RzzLneRv5VtK/FGm9wPGRdRhLzi7Wk59um9NDvd63GDV5ebQCjYBOGd1B82S9bpZlSHoewWXL9yavL5un5X8+/fETXlUkkKB4DRuKU6/aSbe0tKynngY0ZsdyJ/OcS1UbibOAXrt/AYl2/g15gWFYIRvm7VC20immiT4wf1B2fi87o5fbHfWuViJsxhjG4Eb1/0rTkJCTPV8RnNnjiKUJ9k7SRsw+NaK88MNFye0E7sTvl3Z+5vcuKZRatSVdRuP0XztvfyjXmlx2goM/dWMw== jet_sample_ww_grp@oracle.com",
+		"ssh_authorized_keys": string(publicKey),
 	}
 
 	request.Metadata = metadata
@@ -634,22 +646,36 @@ func (d *Driver) getIPs() (string, string) {
 
 }
 
-// GetSSHKeyPath returns the ssh key path
-func (d *Driver) GetSSHKeyPath() string {
-
-	if d.SSHKeyPath == "" {
-		homeFolder := getHomeFolder()
-		d.SSHKeyPath = path.Join(homeFolder, ".oci", "id_rsa_jet")
-	}
-	fmt.Println("SSHKeyPath is: ", d.SSHKeyPath)
-	return d.SSHKeyPath
-
-}
-
 // GetSSHUsername returns the ssh user name, opc if not specified
 func (d *Driver) GetSSHUsername() string {
 	if d.SSHUser == "" {
 		d.SSHUser = "ubuntu"
 	}
 	return d.SSHUser
+}
+
+func (d *Driver) createKeyPair() error {
+	keyPath := ""
+
+	if d.SSHPrivateKeyPath == "" {
+		log.Debugf("Creating New SSH Key")
+		if err := ssh.GenerateSSHKey(d.GetSSHKeyPath()); err != nil {
+			return err
+		}
+		keyPath = d.GetSSHKeyPath()
+	} else {
+		log.Debugf("Using SSHPrivateKeyPath: %s", d.SSHPrivateKeyPath)
+		if err := mcnutils.CopyFile(d.SSHPrivateKeyPath, d.GetSSHKeyPath()); err != nil {
+			return err
+		}
+		if err := mcnutils.CopyFile(d.SSHPrivateKeyPath+".pub", d.GetSSHKeyPath()+".pub"); err != nil {
+			return err
+		}
+		keyPath = d.SSHPrivateKeyPath
+	}
+
+	if err != nil {
+		return err
+	}
+	return nil
 }
