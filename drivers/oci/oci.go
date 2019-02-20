@@ -385,7 +385,6 @@ func (d *Driver) Create() error {
 	d.IPAddress = d.resolvedIP
 	d.SSHUser = "ubuntu"
 	d.SSHPort = 22
-	d.SSHKeyPath = "/home/feiyang/keys/id_rsa_jet"
 
 	fmt.Printf("Driver struct = %+v\n", d)
 	fmt.Printf("BaseDriver struct = %+v\n", *(d.BaseDriver))
