@@ -124,6 +124,7 @@ func sshAvailableFunc(d Driver) func() bool {
 }
 
 func ConfigIPtables(d Driver) (string, error) {
+	fmt.Println("Configuring iptable .. ")
 	WaitForSSH(d)
 
 	preCommands := []string{
@@ -139,6 +140,9 @@ func ConfigIPtables(d Driver) (string, error) {
 	}
 
 	command := "sed -i \"/--dport 22/a\\-A INPUT -p protocal -m state --state NEW -m protocal --dport port -j ACCEPT\" firewall.txt"
+
+	d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+
 	for _, p := range d.OpenPorts {
 		port, protocol := driverutil.SplitPortProto(p)
 		fmt.Println(port, protocol)
@@ -158,5 +162,40 @@ func ConfigIPtables(d Driver) (string, error) {
 		return "", err
 	}
 	fmt.Printf("config iptable to expose port 2376 succeed: %s\n", output)
+	return output, nil
+}
+
+func ConfigFirewalld(d Driver) (string, error) {
+	fmt.Println("Configuring firewall .. ")
+	WaitForSSH(d)
+
+	preCommands := []string{
+		"sudo firewall-cmd --zone=public --add-port=2376/tcp --permanent",
+	}
+	portCommands := []string{}
+	afterCommands := []string{
+		"sudo firewall-cmd --reload",
+	}
+
+	command := "sudo firewall-cmd --zone=public --add-port=portproto --permanent"
+
+	d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+
+	for _, p := range d.OpenPorts {
+		c1 := strings.Replace(command, "portproto", p, -1)
+		fmt.Println(c1)
+		portCommands = append(portCommands, c1)
+	}
+
+	commands := append(preCommands, portCommands...)
+	commands = append(commands, afterCommands...)
+
+	output, err := RunMultiSSHCommandFromDriver(d, commands)
+
+	if err != nil {
+		fmt.Printf("run ssh command failed: %s\n", err)
+		return "", err
+	}
+	fmt.Printf("config firewall to expose port 2376 succeed: %s\n", output)
 	return output, nil
 }

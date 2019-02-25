@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"strings"
 
 	"github.com/docker/machine/libmachine/drivers"
 	"github.com/docker/machine/libmachine/log"
@@ -91,7 +92,6 @@ const (
 func NewDriver(hostName, storePath string) drivers.Driver {
 	d := &Driver{
 		BaseDriver: &drivers.BaseDriver{
-			SSHUser:     defaultSSHUser,
 			MachineName: hostName,
 			StorePath:   storePath,
 		},
@@ -248,11 +248,12 @@ func (d *Driver) PreCreateCheck() (err error) {
 	//     virtual network is in a different region.
 	//   - Changing IP Address space of a subnet would fail if there are machines
 	//     running in the Virtual Network.
-	err = d.checkLogin()
-	if err != nil {
-		fmt.Println("Error:", err)
-		return err
-	}
+
+	// err = d.checkLogin()
+	// if err != nil {
+	// 	fmt.Println("Error:", err)
+	// 	return err
+	// }
 
 	log.Info("Completed machine pre-create checks.")
 	return nil
@@ -383,13 +384,14 @@ func (d *Driver) Create() error {
 
 	d.resolvedIP, d.privateIP = d.getIPs()
 	d.IPAddress = d.resolvedIP
-	d.SSHUser = "ubuntu"
+	d.SSHUser = d.GetSSHUsername()
+	fmt.Println("SSHUser:", d.SSHUser)
 	d.SSHPort = 22
 
 	fmt.Printf("Driver struct = %+v\n", d)
 	fmt.Printf("BaseDriver struct = %+v\n", *(d.BaseDriver))
 
-	ConfigIPtables(*d)
+	d.exposePorts()
 
 	return nil
 }
@@ -397,40 +399,40 @@ func (d *Driver) Create() error {
 // Remove deletes the virtual machine and resources associated to it.
 func (d *Driver) Remove() error {
 	return nil
-	// NOTE In Oci, there is no remove option for virtual
-	// machines, terminate is the closest option.
-	log.Debug("Oci does not implement remove. Calling terminate instead.")
-	request := core.TerminateInstanceRequest{
-		RequestMetadata: helpers.GetRequestMetadataWithDefaultRetryPolicy(),
-	}
-	request.InstanceId = &(d.InstanceID)
+	// // NOTE In Oci, there is no remove option for virtual
+	// // machines, terminate is the closest option.
+	// log.Debug("Oci does not implement remove. Calling terminate instead.")
+	// request := core.TerminateInstanceRequest{
+	// 	RequestMetadata: helpers.GetRequestMetadataWithDefaultRetryPolicy(),
+	// }
+	// request.InstanceId = &(d.InstanceID)
 
-	c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
-	helpers.FatalIfError(err)
-	ctx := context.Background()
-	_, err = c.TerminateInstance(ctx, request)
-	helpers.FatalIfError(err)
+	// c, err := core.NewComputeClientWithConfigurationProvider(common.DefaultConfigProvider())
+	// helpers.FatalIfError(err)
+	// ctx := context.Background()
+	// _, err = c.TerminateInstance(ctx, request)
+	// helpers.FatalIfError(err)
 
-	fmt.Println("terminating instance")
+	// fmt.Println("terminating instance")
 
-	// should retry condition check which returns a bool value indicating whether to do retry or not
-	// it checks the lifecycle status equals to Terminated or not for this case
-	shouldRetryFunc := func(r common.OCIOperationResponse) bool {
-		if converted, ok := r.Response.(core.GetInstanceResponse); ok {
-			return converted.LifecycleState != core.InstanceLifecycleStateTerminated
-		}
-		return true
-	}
+	// // should retry condition check which returns a bool value indicating whether to do retry or not
+	// // it checks the lifecycle status equals to Terminated or not for this case
+	// shouldRetryFunc := func(r common.OCIOperationResponse) bool {
+	// 	if converted, ok := r.Response.(core.GetInstanceResponse); ok {
+	// 		return converted.LifecycleState != core.InstanceLifecycleStateTerminated
+	// 	}
+	// 	return true
+	// }
 
-	pollGetRequest := core.GetInstanceRequest{
-		RequestMetadata: helpers.GetRequestMetadataWithCustomizedRetryPolicy(shouldRetryFunc),
-	}
+	// pollGetRequest := core.GetInstanceRequest{
+	// 	RequestMetadata: helpers.GetRequestMetadataWithCustomizedRetryPolicy(shouldRetryFunc),
+	// }
 
-	pollGetRequest.InstanceId = &(d.InstanceID)
-	_, pollErr := c.GetInstance(ctx, pollGetRequest)
-	helpers.FatalIfError(pollErr)
-	fmt.Println("instance terminated")
-	return err
+	// pollGetRequest.InstanceId = &(d.InstanceID)
+	// _, pollErr := c.GetInstance(ctx, pollGetRequest)
+	// helpers.FatalIfError(pollErr)
+	// fmt.Println("instance terminated")
+	// return err
 }
 
 // GetIP returns public IP address or hostname of the machine instance.
@@ -648,33 +650,62 @@ func (d *Driver) getIPs() (string, string) {
 // GetSSHUsername returns the ssh user name, opc if not specified
 func (d *Driver) GetSSHUsername() string {
 	if d.SSHUser == "" {
-		d.SSHUser = "ubuntu"
+		name := strings.ToLower(d.ImageName)
+
+		if strings.Contains(name, "ubuntu") {
+			return "ubuntu"
+		}
+		if strings.Contains(name, "oracle") {
+			return "opc"
+		}
+		if strings.Contains(name, "centos") {
+			return "opc"
+		}
+
+		return defaultSSHUser
 	}
+
 	return d.SSHUser
 }
 
-func (d *Driver) createKeyPair() error {
+func (d *Driver) exposePorts() {
+
+	fmt.Println("Exposing ports ..")
+
+	name := strings.ToLower(d.ImageName)
+	fmt.Printf("ImageName:%s", name)
+
+	if strings.Contains(name, "ubuntu") {
+		ConfigIPtables(*d)
+	}
+	if strings.Contains(name, "oracle") {
+		ConfigFirewalld(*d)
+	}
+	if strings.Contains(name, "centos") {
+		ConfigFirewalld(*d)
+	}
+
+}
+
+func (d *Driver) createKeyPair() (string, error) {
 	keyPath := ""
 
 	if d.SSHPrivateKeyPath == "" {
 		log.Debugf("Creating New SSH Key")
 		if err := ssh.GenerateSSHKey(d.GetSSHKeyPath()); err != nil {
-			return err
+			return "", err
 		}
 		keyPath = d.GetSSHKeyPath()
 	} else {
 		log.Debugf("Using SSHPrivateKeyPath: %s", d.SSHPrivateKeyPath)
 		if err := mcnutils.CopyFile(d.SSHPrivateKeyPath, d.GetSSHKeyPath()); err != nil {
-			return err
+			return "", err
 		}
 		if err := mcnutils.CopyFile(d.SSHPrivateKeyPath+".pub", d.GetSSHKeyPath()+".pub"); err != nil {
-			return err
+			return "", err
 		}
 		keyPath = d.SSHPrivateKeyPath
 	}
 
-	if err != nil {
-		return err
-	}
-	return nil
+	return keyPath, nil
 }
