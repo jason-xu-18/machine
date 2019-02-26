@@ -71,6 +71,8 @@ const (
 	defaultOciDockerPort      = 2376
 )
 
+var defaultOciPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+
 const (
 	flagOciAvailableDomain = "oci-available-domain"
 	flagOciFaultDomain     = "oci-fault-domain"
@@ -79,13 +81,11 @@ const (
 	flagOciVCNName         = "oci-vnet"
 	flagOciSubnetName      = "oci-subnet"
 	flagOciCompartmentName = "oci-compartment"
+	flagOciPorts           = "oci-open-port"
 )
 
 const (
-	driverName               = "oci"
-	ipRange                  = "0.0.0.0/0"
-	machineSecurityGroupName = "rancher-nodes"
-	machineTag               = "rancher-nodes"
+	driverName = "oci"
 )
 
 // NewDriver returns a new driver instance.
@@ -201,6 +201,11 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			EnvVar: "OCI_COMPARTMENT_NAME",
 			Value:  defaultOciCompartmentName,
 		},
+		mcnflag.StringSliceFlag{
+			Name:  flagOciPorts,
+			Usage: "Make the specified port number accessible from the Internet",
+			Value: defaultOciPorts,
+		},
 	}
 }
 
@@ -229,6 +234,8 @@ func (d *Driver) SetConfigFromFlags(fl drivers.DriverOptions) error {
 		}
 	}
 
+	// Optional flags or Flags of other types
+	d.OpenPorts = fl.StringSlice(flagOciPorts)
 	log.Debug("Set configuration from flags.")
 
 	return nil

@@ -141,7 +141,8 @@ func ConfigIPtables(d Driver) (string, error) {
 
 	command := "sed -i \"/--dport 22/a\\-A INPUT -p protocal -m state --state NEW -m protocal --dport port -j ACCEPT\" firewall.txt"
 
-	d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+	//d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+	fmt.Printf("Exposing ports: %+v", d.OpenPorts)
 
 	for _, p := range d.OpenPorts {
 		port, protocol := driverutil.SplitPortProto(p)
@@ -179,7 +180,8 @@ func ConfigFirewalld(d Driver) (string, error) {
 
 	command := "sudo firewall-cmd --zone=public --add-port=portproto --permanent"
 
-	d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+	//d.OpenPorts = []string{"6443/tcp", "2379/tcp", "2380/tcp", "8472/udp", "4789/udp", "10256/tcp", "10250/tcp", "10251/tcp", "10252/tcp"}
+	fmt.Printf("Exposing ports: %+v", d.OpenPorts)
 
 	for _, p := range d.OpenPorts {
 		c1 := strings.Replace(command, "portproto", p, -1)
